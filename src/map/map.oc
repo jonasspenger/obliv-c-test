@@ -1,0 +1,292 @@
+#include <obliv.oh>
+#include<bcrandom.h>
+
+#include "map.h"
+
+void swapInt(obliv int* a,obliv int* b) obliv
+{
+  ~obliv(en) {
+    obliv int t = 0;
+    obliv if(en) t = *a ^ *b;
+    *a ^= t;
+    *b ^= t;
+  }
+  return;
+}
+
+void mapinit(ProtocolState *ps) obliv {
+  ~obliv() {
+    ps->kvvector.len = 0;
+    ps->serializedstate = NULL;
+    ps->r = NULL;
+  }
+  return;
+}
+
+// command 1
+void mapset(ProtocolState *ps, obliv int key, obliv int value) obliv {
+  ~obliv() {
+    if (ps->kvvector.len == 0) {
+      ps->kvvector.karray = malloc(sizeof(obliv int) * (ps->kvvector.len + 1));
+      ps->kvvector.varray = malloc(sizeof(obliv int) * (ps->kvvector.len + 1));
+    } else {
+      ps->kvvector.karray = realloc(ps->kvvector.karray, sizeof(obliv int) * (ps->kvvector.len + 1));
+      ps->kvvector.varray = realloc(ps->kvvector.varray, sizeof(obliv int) * (ps->kvvector.len + 1));
+    }
+    ps->kvvector.karray[ps->kvvector.len] = 0;
+    ps->kvvector.varray[ps->kvvector.len] = 0;
+  }
+  ps->kvvector.karray[ps->kvvector.len] = key;
+  ps->kvvector.varray[ps->kvvector.len] = value;
+  ps->kvvector.len = ps->kvvector.len + 1;
+  return;
+}
+
+// command 2
+obliv int mapget(ProtocolState *ps, obliv int key) obliv {
+  obliv int value = -1;
+  for (int i = 0; i < ps->kvvector.len; ++i) {
+    obliv if (ps->kvvector.karray[i] == key) {
+      value = ps->kvvector.varray[i];
+    }
+  }
+  return value;
+}
+
+// command 3
+obliv int mapremove(ProtocolState *ps, obliv int key) obliv {
+  obliv int value = -1;
+  for (int i = 0; i < ps->kvvector.len; ++i) {
+    obliv if (ps->kvvector.karray[i] == key) {
+      ps->kvvector.karray[i] = 0;
+      ps->kvvector.varray[i] = 0;
+    }
+  }
+  return value;
+}
+
+// command 4
+void mapprune(ProtocolState *ps) obliv {
+  obliv int k = 0;
+  for (int i = 0; i < ps->kvvector.len; ++i) {
+    obliv if (ps->kvvector.karray[i] != 0) {
+      for (int j = 0; j < i; ++j) {
+        obliv if (ps->kvvector.karray[i] == ps->kvvector.karray[j]) {
+          ps->kvvector.karray[j] = ps->kvvector.karray[i];
+          ps->kvvector.varray[j] = ps->kvvector.varray[i];
+          ps->kvvector.karray[i] = 0;
+          ps->kvvector.varray[i] = 0;
+        } else obliv if (ps->kvvector.karray[j] == 0) {
+          ps->kvvector.karray[j] = ps->kvvector.karray[i];
+          ps->kvvector.varray[j] = ps->kvvector.varray[i];
+          ps->kvvector.karray[i] = 0;
+          ps->kvvector.varray[i] = 0;
+        }
+      }
+    }
+  }
+  for (int i = 0; i < ps->kvvector.len; ++i) {
+    obliv if (ps->kvvector.karray[i] != 0) {
+      k = k + 1;
+    }
+  }
+  ~obliv() {
+    if (ps->kvvector.len != 0) {
+      revealOblivInt(&ps->kvvector.len, k, 0);
+      ps->kvvector.karray = realloc(ps->kvvector.karray, sizeof(obliv int) * (ps->kvvector.len));
+      ps->kvvector.varray = realloc(ps->kvvector.varray, sizeof(obliv int) * (ps->kvvector.len));
+    }
+  }
+  return;
+}
+
+// command 5
+void mapclear(ProtocolState *ps) obliv {
+  for (int i = 0; i < ps->kvvector.len; ++i) {
+    ps->kvvector.karray[i] = 0;
+    ps->kvvector.varray[i] = 0;
+  }
+  return;
+}
+
+// deserialize state and decrypt the state using the two private random variables
+void deserializeState(ProtocolState *ps) obliv {
+  ~obliv() {
+    obliv int* rrr1 = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+    obliv int* rrr2 = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+    obliv int* rc = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+    obliv int* encstate = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+
+    // load shared random variable
+    feedOblivIntArray(rrr1, ps->r, 2 * ps->kvvector.len, 1);
+    feedOblivIntArray(rrr2, ps->r, 2 * ps->kvvector.len, 2);
+    for (int i = 0; i < 2*ps->kvvector.len; ++i) {
+      rc[i] = rrr1[i] ^ rrr2[i];
+    }
+
+    // load encrypted state
+    feedOblivIntArray(encstate, ps->serializedstate, 2*ps->kvvector.len, 1);
+
+    // decrypt encrypted state using shared random variable
+    for (int i = 0; i < 2*ps->kvvector.len; ++i) {
+      if (i < ps->kvvector.len) {
+        ps->kvvector.karray[i] = encstate[i] ^ rc[i];
+      } else {
+        ps->kvvector.varray[i-ps->kvvector.len] = encstate[i] ^ rc[i];
+      }
+    }
+
+    free(rrr1);
+    free(rrr2);
+    free(rc);
+    free(encstate);
+    free(ps->serializedstate);
+    free(ps->r);
+  }
+}
+
+// serialize state and encrypt the state using the two private random variables
+void serializeState(ProtocolState *ps) obliv {
+  ~obliv() {
+    BCipherRandomGen* gen;
+    int* rr = malloc(2 * sizeof(int) * (ps->kvvector.len));
+    obliv int* rrr1 = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+    obliv int* rrr2 = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+
+    // generate shared random variable
+    gen = newBCipherRandomGen();
+    randomizeBuffer(gen, rr, 2 * sizeof(int) * ps->kvvector.len);
+    feedOblivIntArray(rrr1, rr, 2 * ps->kvvector.len, 1);
+    feedOblivIntArray(rrr2, rr, 2 * ps->kvvector.len, 2);
+    obliv int* rc = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+    for (int i = 0; i < 2*ps->kvvector.len; ++i) {
+      rc[i] = rrr1[i] ^ rrr2[i];
+    }
+    releaseBCipherRandomGen(gen);
+
+    // encrypt state using shared random variable
+    obliv int* encstate = malloc(2 * sizeof(obliv int) * (ps->kvvector.len));
+    for (int i = 0; i < 2*ps->kvvector.len; ++i) {
+      if (i < ps->kvvector.len) {
+        encstate[i] = rc[i] ^ ps->kvvector.karray[i];
+      } else {
+        encstate[i] = rc[i] ^ ps->kvvector.varray[i-ps->kvvector.len];
+      }
+    }
+
+    // publicly serialize encrypted state
+    char* serializedstate = malloc(2 * sizeof(int) * (ps->kvvector.len));
+    revealOblivIntArray(serializedstate, encstate, 2*ps->kvvector.len, 0);
+
+    // save state and random variable for next round
+    ps->serializedstate = serializedstate;
+    ps->r = rr;
+
+    free(rrr1);
+    free(rrr2);
+    free(rc);
+    free(encstate);
+  }
+}
+
+void mapsetup(void* args) {
+  ProtocolIO *io=args;
+  ProtocolState *ps=&(io->ps);
+  mapinit(ps);
+  return;
+}
+
+void mapexec(void* args) {
+  ProtocolIO *io=args;
+  ProtocolState *ps=&(io->ps);
+  deserializeState(ps);
+
+  #ifdef DEBUG
+  ProtocolDebugState *debugState = &(io->debugState);
+  ProtocolDebugState *debugPrevState = &(io->debugPrevState);
+  debugPrevState->len = ps->kvvector.len;
+  debugPrevState->karray = malloc(sizeof(int) * debugPrevState->len);
+  debugPrevState->varray = malloc(sizeof(int) * debugPrevState->len);
+  revealOblivIntArray(debugPrevState->karray, ps->kvvector.karray, debugPrevState->len, 0);
+  revealOblivIntArray(debugPrevState->varray, ps->kvvector.varray, debugPrevState->len, 0);
+  #endif
+
+  obliv int command1, command2, key1, key2, value1, value2;
+  obliv int retkey1, retval1, retkey2, retval2;
+  bool prune;
+
+  command1 = feedOblivInt(io->input.command, 1);
+  key1 = feedOblivInt(io->input.key, 1);
+  value1 = feedOblivInt(io->input.value, 1);
+  command2 = feedOblivInt(io->input.command, 2);
+  key2 = feedOblivInt(io->input.key, 2);
+  value2 = feedOblivInt(io->input.value, 2);
+  retkey1 = feedOblivInt(0, 1);
+  retval1 = feedOblivInt(0, 1);
+  retkey1 = feedOblivInt(0, 2);
+  retval2 = feedOblivInt(0, 2);
+
+  BCipherRandomGen* gen = newBCipherRandomGen();
+  obliv bool r1 = feedOblivBool(bcRandomInt(gen, 2), 1);
+  obliv bool r2 = feedOblivBool(bcRandomInt(gen, 2), 2);
+  releaseBCipherRandomGen(gen);
+  obliv bool r3 = r1 ^ r2;
+
+  obliv if (r3) {
+    swapInt(&command1, &command2);
+    swapInt(&key1, &key2);
+    swapInt(&value1, &value2);
+  }
+
+  // set
+  obliv if (command1 == 1) {
+    mapset(ps, key1, value1);
+  }
+  obliv if (command2 == 1) {
+    mapset(ps, key2, value2);
+  }
+  // get
+  obliv if (command1 == 2) {
+    retkey1 = key1;
+    retval1 = mapget(ps, key1);
+  }
+  obliv if (command2 == 2) {
+    retkey2 = key2;
+    retval2 = mapget(ps, key2);
+  }
+  // remove
+  obliv if (command1 == 3) {
+    mapremove(ps, key1);
+  }
+  obliv if (command2 == 3) {
+    mapremove(ps, key2);
+  }
+  // prune
+  revealOblivBool(&prune, command1==4 & command2==4, 0);
+  if (prune) {
+    mapprune(ps);
+  }
+  // clear
+  obliv if (command1 == 5) {
+    mapclear(ps);
+  }
+  obliv if (command2 == 5) {
+    mapclear(ps);
+  }
+
+  revealOblivInt(&io->result.key1, retkey1, 0);
+  revealOblivInt(&io->result.val1, retval1, 0);
+  revealOblivInt(&io->result.key2, retkey2, 0);
+  revealOblivInt(&io->result.val2, retval2, 0);
+
+  #ifdef DEBUG
+  debugState->len = ps->kvvector.len;
+  debugState->karray = malloc(sizeof(int) * debugState->len);
+  debugState->varray = malloc(sizeof(int) * debugState->len);
+  revealOblivIntArray(debugState->karray, ps->kvvector.karray, debugState->len, 0);
+  revealOblivIntArray(debugState->varray, ps->kvvector.varray, debugState->len, 0);
+  #endif
+
+  serializeState(ps);
+  return;
+}
